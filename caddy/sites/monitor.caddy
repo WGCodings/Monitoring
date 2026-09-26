@@ -1,4 +1,15 @@
-# Monitoring dashboard (Grafana, this stack). Grafana has its own login.
+# Monitoring: Beszel dashboard (own login) and the GoAccess traffic report
+# (password from TRAFFIC_USER / TRAFFIC_PASS_HASH in .env).
+# Not logged itself, so the traffic report only counts the real apps.
 monitor.wgcodings.com {
-	reverse_proxy grafana:3000
+	handle_path /traffic* {
+		basic_auth {
+			{$TRAFFIC_USER} {$TRAFFIC_PASS_HASH}
+		}
+		root * /srv/traffic
+		file_server
+	}
+	handle {
+		reverse_proxy beszel:8090
+	}
 }

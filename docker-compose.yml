@@ -1,12 +1,13 @@
 # Infrastructure stack for pi-alpha:
-#   - Caddy: the one reverse proxy + HTTPS for every app on the Pi
-#     (sites in caddy/sites/, apps reached over the shared `edge` network)
-#   - Monitoring: Prometheus + Grafana + node_exporter + cAdvisor
+#   - Caddy:   the one reverse proxy + HTTPS for every app on the Pi
+#              (sites in caddy/sites/, apps reached over the shared `edge`
+#              network). Also writes the access log GoAccess reads.
+#   - Beszel:  lightweight monitoring. `beszel` is the hub (web UI +
+#              history), `beszel-agent` collects this Pi's stats. Future
+#              Pi's only run an agent (see agent/docker-compose.yml).
+#   - GoAccess: turns Caddy's access log into a visitor report
+#              (monitor.wgcodings.com/traffic).
 # See README.md for setup.
-#
-# Only Caddy is published to the internet (80/443). Prometheus, cAdvisor
-# and node_exporter have no public address; Grafana is reached through
-# Caddy at monitor.wgcodings.com.
 
 services:
   caddy:
@@ -17,101 +18,67 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"   # HTTP/3
+    environment:
+      # Password for monitor.wgcodings.com/traffic (see .env.example)
+      TRAFFIC_USER: ${TRAFFIC_USER:-admin}
+      TRAFFIC_PASS_HASH: ${TRAFFIC_PASS_HASH:?set TRAFFIC_PASS_HASH in .env}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy/sites:/etc/caddy/sites:ro
-      - caddy_data:/data        # certificates, keep this volume
+      - ./logs/caddy:/var/log/caddy          # access log, read by GoAccess
+      - ./traffic:/srv/traffic:ro            # GoAccess report
+      - caddy_data:/data                     # certificates, keep this volume
       - caddy_config:/config
-    # default: grafana + Prometheus scraping caddy:9180.
-    # edge: every app stack on the Pi (TrailCraft, OpenBench, ...).
+    # default: beszel hub. edge: every app stack on the Pi.
     networks: [default, edge]
 
-  prometheus:
-    image: prom/prometheus:v3.1.0
-    container_name: prometheus
-    restart: unless-stopped
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-30d}
-      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-5GB}
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    extra_hosts:
-      # node_exporter runs on the host network (see below); this name
-      # resolves to the host from inside this container.
-      - host.docker.internal:host-gateway
-    # default: cadvisor and caddy (metrics on caddy:9180).
-    networks: [default]
-
-  grafana:
-    image: grafana/grafana-oss:11.4.0
-    container_name: grafana
+  beszel:
+    # Hub: web UI, login, history (SQLite), alerts. ~20-30 MB RAM.
+    image: henrygd/beszel:latest
+    container_name: beszel
     restart: unless-stopped
     environment:
-      # Admin credentials only apply on the very first start (when the
-      # Grafana database is created). Change the password later in the UI.
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://monitor.wgcodings.com}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      # Open straight on our own dashboard instead of Grafana's welcome page
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pi-overview.json
+      APP_URL: https://monitor.wgcodings.com
     volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    depends_on: [prometheus]
-    # default: prometheus, and reached by Caddy as grafana:3000.
+      - ./beszel_data:/beszel_data
+      - ./beszel_socket:/beszel_socket       # talks to the local agent
     networks: [default]
 
-  node-exporter:
-    # Pi-level stats: CPU, load, RAM, temperature, disk, network.
-    # Host network + host PID so it sees the real machine, not a container.
-    image: prom/node-exporter:v1.8.2
-    container_name: node-exporter
+  beszel-agent:
+    # Collects this Pi's CPU, RAM, disk, temperature, network, and per-
+    # container stats (straight from Docker, no cAdvisor). ~10 MB RAM.
+    # Host network so it sees the Pi's real network interfaces.
+    image: henrygd/beszel-agent:latest
+    container_name: beszel-agent
     restart: unless-stopped
     network_mode: host
-    pid: host
-    command:
-      - --path.rootfs=/host
-      - --web.listen-address=:9100
-      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/.+)($$|/)
+    environment:
+      # The hub reaches this agent through a unix socket (no open port).
+      LISTEN: /beszel_socket/beszel.sock
+      # Public key shown in the hub's "Add system" dialog (see README)
+      KEY: ${BESZEL_AGENT_KEY:?set BESZEL_AGENT_KEY in .env}
     volumes:
-      - /:/host:ro,rslave
+      - ./beszel_socket:/beszel_socket
+      - ./beszel_agent_data:/var/lib/beszel-agent
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  cadvisor:
-    # Per-container stats: CPU, memory, network, restarts.
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    container_name: cadvisor
+  goaccess:
+    # Rebuilds the visitor report from Caddy's access log every 5 minutes.
+    # Sleeps in between, so it uses almost no CPU/RAM. No network needed.
+    image: allinurl/goaccess:latest
+    container_name: goaccess
     restart: unless-stopped
-    privileged: true
-    devices:
-      - /dev/kmsg
-    command:
-      - --docker_only=true
-      - --housekeeping_interval=30s
-      - --store_container_labels=false
-      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
-      - --disable_metrics=percpu,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl,memory_numa
+    network_mode: none
+    entrypoint: ["/bin/sh", "/run.sh"]
     volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    # No published port: only Prometheus reads it.
-    networks: [default]
+      - ./logs/caddy:/var/log/caddy:ro
+      - ./traffic:/report
+      - ./goaccess_db:/goaccess_db
+      - ./goaccess/run.sh:/run.sh:ro
 
 volumes:
   caddy_data:
   caddy_config:
-  prometheus_data:
-  grafana_data:
 
 networks:
   edge:

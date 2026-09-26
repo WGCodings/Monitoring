@@ -5,6 +5,7 @@
 # Path-based routing on one origin: /api/* to the backend, everything else
 # to the frontend's static files. Same-origin, so no CORS needed.
 trailcraft.wgcodings.com {
+	import access_log
 	handle /api/* {
 		reverse_proxy trailcraft-backend-1:8000
 	}

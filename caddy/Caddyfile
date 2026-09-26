@@ -4,25 +4,25 @@
 #
 # One file per site in sites/. To add a new app:
 #   1. put its containers on the shared `edge` network,
-#   2. add sites/<app>.caddy,
+#   2. add sites/<app>.caddy (with `import access_log` to count its visits),
 #   3. add the DNS record at Combell,
 #   4. `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
-#      (or `docker compose restart caddy`).
 
 {
-	# Request metrics for Prometheus, split per site (host).
-	metrics {
-		per_host
-	}
 	# Optional: e-mail for Let's Encrypt expiry notices
 	# email you@example.com
 }
 
-import sites/*.caddy
-
-# Caddy's own metrics for Prometheus. Plain HTTP on 9180, not published
-# in docker-compose.yml, so only containers on this stack's network can
-# reach it, never the internet.
-:9180 {
-	metrics
+# Access log shared by all sites (JSON), read by GoAccess for the traffic
+# report. Rotated at 50 MB, 5 old files kept.
+(access_log) {
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
 }
+
+import sites/*.caddy
