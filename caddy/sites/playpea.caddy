@@ -1,0 +1,6 @@
+# PlayPea (~/PlayPea). Container `playpea` on the `edge` network.
+# Static site only: the chess engines run in the visitor's browser.
+playpea.wgcodings.com {
+	import access_log
+	reverse_proxy playpea:80
+}

@@ -18,7 +18,8 @@ internet ──► Caddy (this stack, 80/443)
               ├─ monitor.wgcodings.com/traffic  ─► GoAccess report (static, password)
               ├─ trailcraft.wgcodings.com       ─► trailcraft-backend-1:8000  (~/TrailCraft, via `edge`)
               │                                  └► trailcraft-frontend-1:80
-              └─ openbench.wgcodings.com        ─► openbench:8000             (~/OpenBench, via `edge`)
+              ├─ openbench.wgcodings.com        ─► openbench:8000             (~/OpenBench, via `edge`)
+              └─ playpea.wgcodings.com          ─► playpea:80                 (~/PlayPea, via `edge`)
 ```
 
 ### Adding a new app
