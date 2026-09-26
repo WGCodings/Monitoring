@@ -60,6 +60,8 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Open straight on our own dashboard instead of Grafana's welcome page
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pi-overview.json
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -106,24 +108,11 @@ services:
     # No published port: only Prometheus reads it.
     networks: [default]
 
-  uptime-kuma:
-    # "Is my site up?" checks + notifications. LAN-only on port 3001 until
-    # you've created the admin account (the first visitor gets to create it).
-    image: louislam/uptime-kuma:1
-    container_name: uptime-kuma
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    volumes:
-      - uptime_kuma_data:/app/data
-    networks: [default]
-
 volumes:
   caddy_data:
   caddy_config:
   prometheus_data:
   grafana_data:
-  uptime_kuma_data:
 
 networks:
   edge:
