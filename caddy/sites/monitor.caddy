@@ -1,0 +1,4 @@
+# Monitoring dashboard (Grafana, this stack). Grafana has its own login.
+monitor.wgcodings.com {
+	reverse_proxy grafana:3000
+}

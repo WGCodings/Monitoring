@@ -1,0 +1,14 @@
+# TrailCraft (~/TrailCraft). Its backend/frontend join the `edge` network;
+# addressed by container name, which is unique per Compose project, so the
+# dev stack (~/TrailCraft-dev, trailcraft-dev-*) is never hit by accident.
+#
+# Path-based routing on one origin: /api/* to the backend, everything else
+# to the frontend's static files. Same-origin, so no CORS needed.
+trailcraft.wgcodings.com {
+	handle /api/* {
+		reverse_proxy trailcraft-backend-1:8000
+	}
+	handle {
+		reverse_proxy trailcraft-frontend-1:80
+	}
+}

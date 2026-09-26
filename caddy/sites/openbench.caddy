@@ -1,0 +1,4 @@
+# OpenBench (~/OpenBench). Container `openbench` on the `edge` network.
+openbench.wgcodings.com {
+	reverse_proxy openbench:8000
+}

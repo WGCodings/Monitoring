@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # The Pi itself (node_exporter on the host network)
+  - job_name: node
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+        labels:
+          instance: pi-alpha
+
+  # Every Docker container (cAdvisor)
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          instance: pi-alpha
+
+  # Requests per site through Caddy (this stack, :9180 metrics site)
+  - job_name: caddy
+    static_configs:
+      - targets: ['caddy:9180']
+        labels:
+          instance: pi-alpha
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

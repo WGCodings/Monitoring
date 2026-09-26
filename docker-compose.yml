@@ -1,0 +1,130 @@
+# Infrastructure stack for pi-alpha:
+#   - Caddy: the one reverse proxy + HTTPS for every app on the Pi
+#     (sites in caddy/sites/, apps reached over the shared `edge` network)
+#   - Monitoring: Prometheus + Grafana + node_exporter + cAdvisor
+#   - Uptime Kuma: up/down checks
+# See README.md for setup.
+#
+# Only Caddy is published to the internet (80/443). Prometheus, cAdvisor
+# and node_exporter have no public address; Grafana is reached through
+# Caddy at monitor.wgcodings.com.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
+      - caddy_data:/data        # certificates, keep this volume
+      - caddy_config:/config
+    # default: grafana + Prometheus scraping caddy:9180.
+    # edge: every app stack on the Pi (TrailCraft, OpenBench, ...).
+    networks: [default, edge]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROM_RETENTION_TIME:-30d}
+      - --storage.tsdb.retention.size=${PROM_RETENTION_SIZE:-5GB}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      # node_exporter runs on the host network (see below); this name
+      # resolves to the host from inside this container.
+      - host.docker.internal:host-gateway
+    # default: cadvisor and caddy (metrics on caddy:9180).
+    networks: [default]
+
+  grafana:
+    image: grafana/grafana-oss:11.4.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      # Admin credentials only apply on the very first start (when the
+      # Grafana database is created). Change the password later in the UI.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://monitor.wgcodings.com}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    # default: prometheus, and reached by Caddy as grafana:3000.
+    networks: [default]
+
+  node-exporter:
+    # Pi-level stats: CPU, load, RAM, temperature, disk, network.
+    # Host network + host PID so it sees the real machine, not a container.
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=:9100
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/.+)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+
+  cadvisor:
+    # Per-container stats: CPU, memory, network, restarts.
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+      - --disable_metrics=percpu,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl,memory_numa
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    # No published port: only Prometheus reads it.
+    networks: [default]
+
+  uptime-kuma:
+    # "Is my site up?" checks + notifications. LAN-only on port 3001 until
+    # you've created the admin account (the first visitor gets to create it).
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks: [default]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:
+  uptime_kuma_data:
+
+networks:
+  edge:
+    external: true
