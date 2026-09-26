@@ -2,7 +2,6 @@
 #   - Caddy: the one reverse proxy + HTTPS for every app on the Pi
 #     (sites in caddy/sites/, apps reached over the shared `edge` network)
 #   - Monitoring: Prometheus + Grafana + node_exporter + cAdvisor
-#   - Uptime Kuma: up/down checks
 # See README.md for setup.
 #
 # Only Caddy is published to the internet (80/443). Prometheus, cAdvisor
